@@ -2,23 +2,23 @@
 import requests 
 from elasticsearch import Elasticsearch
 from tqdm import tqdm
+import tiktoken
+
+#%%
+import os
+from mistralai import Mistral
+from dotenv import load_dotenv
+
+load_dotenv()
+mistral_key = os.getenv("MISTRAL_API_KEY")
+
+model = "mistral-large-latest"
+client = Mistral(api_key=mistral_key)
 
 # %%
-def search(query):
-    boost = {'question': 3.0, 'section': 0.5}
-
-    results = index.search(
-        query=query,
-        filter_dict={'course': 'data-engineering-zoomcamp'},
-        boost_dict= boost,
-        num_results= 5
-    )
-    
-    return results
-
-def elastic_search(query):
+def elastic_search(query, size=3):
     search_query = {
-        "size": 5,
+        "size": size,
         "query": {
             "bool": {
                 "must": {
@@ -30,7 +30,7 @@ def elastic_search(query):
                 },
                 "filter": {
                     "term": {
-                        "course": "data-engineering-zoomcamp"
+                        "course": "machine-learning-zoomcamp"
                     }
                 }
             }
@@ -41,47 +41,53 @@ def elastic_search(query):
 
     result_docs = []
     for hit in response['hits']['hits']:
-        result_docs.append(hit['_source'])
+        result_docs.append(hit)
         
     return result_docs
 
 def build_prompt(query, search_results):
     prompt_template = """
-    Tu es un assistant qui répond aux questions sur des cours en ligne. Répond à la QUESTION basé sur le CONTEXT issu des données de la FAQ.
-    Utilise seulement les données présent dans le CONTEXT pour répondre à la QUESTION.
-    Si le CONTEXT ne continet pas la réponse, réponds NONE.
+        You're a course teaching assistant. Answer the QUESTION based on the CONTEXT from the FAQ database.
+        Use only the facts from the CONTEXT when answering the QUESTION.
 
-    Tu me répondras en Français.
+        QUESTION: {question}
 
-    QUESTION: {question}
-
-    CONTEXT:
-    {context}
-    """.strip()
+        CONTEXT:
+        {context}
+        """.strip()
 
     context = ''
 
     for doc in search_results:
-        context = context + f"section: {doc['section']}\nquestion: {doc['question']}\nanswer: {doc['text']}\n\n"
+        doc_source = doc['_source']
+        context = context + f"""
+        Q: {doc_source["question"]}
+        A: {doc_source["text"]}
+        """.strip() + "\n\n"
         
     prompt = prompt_template.format(question=query, context=context)
     return prompt
 
 def llm(prompt):
-    chat_response = client.chat(
+    chat_response = client.chat.complete(
         model=model,
-        messages=[ChatMessage(role="user", content=prompt)]
+        messages = [
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ]
     )
 
     return chat_response.choices[0].message.content
 
 def rag(query):
-    search_results = elastic_search(query)
+    search_results = elastic_search(query, 3)
     prompt = build_prompt(query, search_results)
+    print(f'Prompt length: {len(prompt)}')
     answer = llm(prompt)
     
     return answer
-
 
 #%%
 docs_url = 'https://github.com/DataTalksClub/llm-zoomcamp/blob/main/01-intro/documents.json?raw=1'
@@ -100,7 +106,6 @@ for course in documents_raw:
 
 #%%    
 documents[:5] 
-
 
 
 # %%
@@ -128,4 +133,24 @@ es_client.indices.create(index=index_name, body=index_settings)
 for doc in tqdm(documents):
     es_client.index(index=index_name, body=doc)
     
+# %%
+##Question 2
+elastic_search('How do execute a command on a Kubernetes pod?')[0]['_score']
+
+# %%
+##Question 3
+elastic_search('How do copy a file to a Docker container?')[2]['_source']['question']
+# %%
+##Question 4
+answer = rag('How do copy a file to a Docker container?')
+print(answer)
+
+# %%
+##Question 5
+query = 'How do copy a file to a Docker container?'
+search_results = elastic_search(query, 3)
+prompt = build_prompt(query, search_results)
+encoding = tiktoken.encoding_for_model('gpt-4o')
+
+len(encoding.encode(prompt))
 # %%
