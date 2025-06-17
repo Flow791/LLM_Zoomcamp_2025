@@ -1,0 +1,131 @@
+#%%
+import requests 
+from elasticsearch import Elasticsearch
+from tqdm import tqdm
+
+# %%
+def search(query):
+    boost = {'question': 3.0, 'section': 0.5}
+
+    results = index.search(
+        query=query,
+        filter_dict={'course': 'data-engineering-zoomcamp'},
+        boost_dict= boost,
+        num_results= 5
+    )
+    
+    return results
+
+def elastic_search(query):
+    search_query = {
+        "size": 5,
+        "query": {
+            "bool": {
+                "must": {
+                    "multi_match": {
+                        "query": query,
+                        "fields": ["question^4", "text"],
+                        "type": "best_fields"
+                    }
+                },
+                "filter": {
+                    "term": {
+                        "course": "data-engineering-zoomcamp"
+                    }
+                }
+            }
+        }
+    }
+
+    response = es_client.search(index=index_name, body=search_query)
+
+    result_docs = []
+    for hit in response['hits']['hits']:
+        result_docs.append(hit['_source'])
+        
+    return result_docs
+
+def build_prompt(query, search_results):
+    prompt_template = """
+    Tu es un assistant qui répond aux questions sur des cours en ligne. Répond à la QUESTION basé sur le CONTEXT issu des données de la FAQ.
+    Utilise seulement les données présent dans le CONTEXT pour répondre à la QUESTION.
+    Si le CONTEXT ne continet pas la réponse, réponds NONE.
+
+    Tu me répondras en Français.
+
+    QUESTION: {question}
+
+    CONTEXT:
+    {context}
+    """.strip()
+
+    context = ''
+
+    for doc in search_results:
+        context = context + f"section: {doc['section']}\nquestion: {doc['question']}\nanswer: {doc['text']}\n\n"
+        
+    prompt = prompt_template.format(question=query, context=context)
+    return prompt
+
+def llm(prompt):
+    chat_response = client.chat(
+        model=model,
+        messages=[ChatMessage(role="user", content=prompt)]
+    )
+
+    return chat_response.choices[0].message.content
+
+def rag(query):
+    search_results = elastic_search(query)
+    prompt = build_prompt(query, search_results)
+    answer = llm(prompt)
+    
+    return answer
+
+
+#%%
+docs_url = 'https://github.com/DataTalksClub/llm-zoomcamp/blob/main/01-intro/documents.json?raw=1'
+docs_response = requests.get(docs_url)
+documents_raw = docs_response.json()
+
+documents = []
+
+#%%
+for course in documents_raw:
+    course_name = course['course']
+
+    for doc in course['documents']:
+        doc['course'] = course_name
+        documents.append(doc)
+
+#%%    
+documents[:5] 
+
+
+
+# %%
+es_client = Elasticsearch('http://localhost:9200')
+
+index_settings = {
+    "settings": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0
+    },
+    "mappings": {
+        "properties": {
+            "text": {"type": "text"},
+            "section": {"type": "text"},
+            "question": {"type": "text"},
+            "course": {"type": "keyword"} 
+        }
+    }
+}
+
+index_name = 'course-questions'
+
+es_client.indices.create(index=index_name, body=index_settings)
+# %%
+for doc in tqdm(documents):
+    es_client.index(index=index_name, body=doc)
+    
+# %%
