@@ -42,10 +42,9 @@ def build_prompt(query, search_results):
 
     context = ''
 
-    for doc in search_results:
-        doc_source = doc['_source']
+    for result in search_results.points:
+        doc_source = result.payload
         context = context + f"""
-        Q: {doc_source["question"]}
         A: {doc_source["text"]}
         """.strip() + "\n\n"
         
@@ -65,8 +64,8 @@ def llm(llm_client, model, prompt):
 
     return chat_response.choices[0].message.content
 
-def rag(llm_client, model, es_client, index_name, query):
-    search_results = elastic_search(es_client, index_name, query, 3)
+def rag(llm_client, model, qdrant_client, collection_name, embedding_model, query):
+    search_results = qdrant_search(qdrant_client, collection_name, embedding_model, query) #elastic_search(es_client, index_name, query, 3)
     prompt = build_prompt(query, search_results)
     print(f'Prompt length: {len(prompt)}')
     answer = llm(llm_client, model, prompt)
