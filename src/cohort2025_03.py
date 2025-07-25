@@ -3,13 +3,14 @@ import requests
 import pandas as pd
 from minsearch import Index, VectorSearch
 import uuid
+import numpy as np
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from sklearn.pipeline import make_pipeline
 
 from qdrant_client import QdrantClient, models
-from sentence_transformers import SentenceTransformer
+from rouge import Rouge
 
 
 #%%
@@ -61,6 +62,13 @@ def evaluate(ground_truth, search_function):
         'hit_rate': hit_rate(relevance_total),
         'mrr': mrr(relevance_total),
     }
+    
+def cosine(u, v):
+    u_norm = np.sqrt(u.dot(u))
+    v_norm = np.sqrt(v.dot(v))
+    return u.dot(v) / (u_norm * v_norm)
+
+
 # %%
 #Question 1
 text_fields = ['question', 'section', 'text']
@@ -219,4 +227,49 @@ score = evaluate(ground_truth, qdrant_search)
 # %%
 score
 
+# %%
+#Question 5:
+results_url = url_prefix + 'rag_evaluation/data/results-gpt4o-mini.csv'
+df_results = pd.read_csv(results_url)
+
+pipeline = make_pipeline(
+    TfidfVectorizer(min_df=3),
+    TruncatedSVD(n_components=128, random_state=1)
+)
+
+pipeline.fit(df_results.answer_llm + ' ' + df_results.answer_orig + ' ' + df_results.question)
+
+def compute_similarity(record):
+    answer_orig = record['answer_orig']
+    answer_llm = record['answer_llm']
+    
+    v_llm = pipeline.transform([answer_llm])[0]
+    v_orig = pipeline.transform([answer_orig])[0]
+    
+    return cosine(v_llm, v_orig)
+
+similarity = []
+for record in tqdm(df_results.to_dict(orient='records')):
+    sim = compute_similarity(record)
+    similarity.append(sim)
+
+# %%
+df_results['similarity'] = similarity
+df_results['similarity'].mean()
+
+# %%
+#Question 6:
+rouge_scorer = Rouge()
+
+def compute_rouge_1_f1(record):
+    scores = rouge_scorer.get_scores(record['answer_llm'], record['answer_orig'])[0]
+    return scores['rouge-1']['f']
+
+rouge_f1_scores = [
+    compute_rouge_1_f1(record)
+    for _, record in tqdm(df_results.iterrows(), total=len(df_results))
+]
+# %%
+df_results['rouge_1_f1'] = rouge_f1_scores
+df_results['rouge_1_f1'].mean()
 # %%
