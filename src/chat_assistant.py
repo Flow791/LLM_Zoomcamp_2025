@@ -82,21 +82,21 @@ class ChatAssistant:
         self.client = client
     
     def gpt(self, chat_messages):
-        return self.client.chat(
-            model="mistral-small",
-            messages=chat_messages,
-            tools=self.tools.get_tools()
+        return self.client.responses.create(
+            model='gpt-4o-mini',
+            input=chat_messages,
+            tools=self.tools.get_tools(),
         )
 
 
-    def run(self, question):
+    def run(self):
         chat_messages = [
             {"role": "developer", "content": self.developer_prompt},
         ]
 
         # Chat loop
         while True:
-            #question = self.chat_interface.input()
+            question = self.chat_interface.input()
             if question.strip().lower() == 'stop':  
                 self.chat_interface.display("Chat ended.")
                 break
@@ -107,21 +107,22 @@ class ChatAssistant:
             while True:  # inner request loop
                 response = self.gpt(chat_messages)
 
-                has_messages = False
+                has_tool_calls = False
 
-                for entry in response.choices:
+                for entry in response.output:
                     chat_messages.append(entry)
 
                     if entry.type == "function_call":
                         result = self.tools.function_call(entry)
                         chat_messages.append(result)
                         self.chat_interface.display_function_call(entry, result)
+                        has_tool_calls = True
 
                     elif entry.type == "message":
                         self.chat_interface.display_response(entry)
-                        has_messages = True
 
-                if has_messages:
+                if not has_tool_calls:
                     break
     
+
 
